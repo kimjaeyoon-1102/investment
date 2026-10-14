@@ -19,9 +19,26 @@ function simulate(p){
   const gain=value-sellFee-basis;
   const tax=p.route==='us'?Math.max(0,gain-p.allowance)*.22:p.route==='krOther'?Math.max(0,gain)*p.taxRatio/100*.154:0;
   const net=value-sellFee-exitFx-tax;
-  rows.push({m,principal,value,profit:value-principal,monthlyProfit:value-prev-p.monthly,dividend,dt,net,netProfit:net-principal,tax,sellFee,exitFx,buyFees,exchangeFees,divTaxes,dividends,price,fx,units,basis});
+  rows.push({m,principal,value,gain,profit:value-principal,monthlyProfit:value-prev-p.monthly,dividend,dt,net,netProfit:net-principal,tax,sellFee,exitFx,buyFees,exchangeFees,divTaxes,dividends,price,fx,units,basis});
  }
  return rows;
 }
-if(typeof module!=='undefined')module.exports={simulate};else root.simulate=simulate;
+// Holdings share one cash budget; each runs its own path, then sale taxes are combined.
+// US-listed gains and losses offset each other and share one annual allowance; domestic "other" ETFs are taxed per fund.
+function simulatePortfolio(p,holdings){
+ const active=holdings.filter(h=>h.weight>0);
+ const runs=active.map(h=>({h,rows:simulate({...p,...h,monthly:p.monthly*h.weight/100,divTax:h.route==='us'?p.divTaxUs:p.divTaxKr,allowance:0})}));
+ const sum=['principal','value','monthlyProfit','dividend','dt','sellFee','exitFx','buyFees','exchangeFees','divTaxes','dividends'];
+ return runs[0].rows.map((_,i)=>{
+  const row={m:i+1,parts:runs.map(r=>({...r.rows[i],id:r.h.id,route:r.h.route}))};
+  sum.forEach(k=>row[k]=row.parts.reduce((a,x)=>a+x[k],0));
+  const usGain=row.parts.filter(x=>x.route==='us').reduce((a,x)=>a+x.gain,0);
+  row.usTax=row.parts.some(x=>x.route==='us')?Math.max(0,usGain-p.allowance)*.22:0;
+  row.krTax=row.parts.filter(x=>x.route==='krOther').reduce((a,x)=>a+x.tax,0);
+  row.tax=row.usTax+row.krTax;row.profit=row.value-row.principal;
+  row.net=row.value-row.sellFee-row.exitFx-row.tax;row.netProfit=row.net-row.principal;
+  return row;
+ });
+}
+if(typeof module!=='undefined')module.exports={simulate,simulatePortfolio};else{root.simulate=simulate;root.simulatePortfolio=simulatePortfolio;}
 })(typeof window!=='undefined'?window:globalThis);
