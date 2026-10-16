@@ -4,6 +4,8 @@ function simulate(p){
  const effectiveRate=(1+p.rate/100)*(1-(p.expense??0)/100)/(1-(p.refExpense??0)/100)-1;
  const q=Math.pow(1+effectiveRate,1/12)-1,pGrowth=q-p.yield/1200,fxGrowth=p.route==='us'?Math.pow(1+p.fxChange/100,1/12):1;
  let units=0,price=p.price,fx=p.route==='us'?p.fx:1,basis=0,principal=0,buyFees=0,exchangeFees=0,divTaxes=0,dividends=0,rows=[];
+ // Money already invested is held from month 0 at cost: its value starts equal to what was paid and no new purchase costs apply.
+ const initial=Math.max(0,p.initial||0);if(initial){units=initial/(price*fx);basis=initial;principal=initial;}
  for(let m=1;m<=months;m++){
   const prev=units*price*fx;
   fx*=fxGrowth;
@@ -26,7 +28,7 @@ function simulate(p){
 // Holdings share one cash budget; each runs its own path, then sale taxes are combined.
 // US-listed gains and losses offset each other and share one annual allowance; domestic "other" ETFs are taxed per fund.
 function simulatePortfolio(p,holdings){
- const active=holdings.filter(h=>h.weight>0);
+ const active=holdings.filter(h=>h.weight>0||h.initial>0);
  const runs=active.map(h=>({h,rows:simulate({...p,...h,monthly:p.monthly*h.weight/100,divTax:h.route==='us'?p.divTaxUs:p.divTaxKr,allowance:0})}));
  const sum=['principal','value','monthlyProfit','dividend','dt','sellFee','exitFx','buyFees','exchangeFees','divTaxes','dividends'];
  return runs[0].rows.map((_,i)=>{

@@ -35,6 +35,12 @@
   if(!res.ok||data.error)throw fail('provider',data.error||'조회 실패');
   return data;
  }
+ // Quote only, for the diary. The site route accepts only the planner's US presets, so other symbols go direct.
+ window.marketQuote=async symbol=>{
+  const key=$('apiKey').value.trim();if(!key)throw fail('input','API 키가 없습니다. 1단계 "최신 데이터 연결"에서 키를 입력하고 저장해 두세요.');
+  const mode=$('quoteMode').value,data=(supported.has(symbol)?await viaServer(symbol,key,mode,false):null)??await direct(symbol,key,mode,false);
+  if(!data.quote)throw fail('provider',(data.errors||[])[0]||'시세 데이터가 없습니다.');return data.quote;
+ };
  async function fetchOne(symbol,key,mode,automatic){
   const profile=!automatic||!lastProfile[symbol]||Date.now()-lastProfile[symbol]>86400000;
   const data=await viaServer(symbol,key,mode,profile)??await direct(symbol,key,mode,profile);
