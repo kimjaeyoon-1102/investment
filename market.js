@@ -1,5 +1,9 @@
-// Credentials remain in the password field in this tab; never persisted or logged.
+// The API key stays in this tab unless the user opts in to keeping it in this browser's localStorage; never logged.
 (()=>{
+ const keyStore='chagok-av-key';
+ try{const saved=localStorage.getItem(keyStore);if(saved){$('apiKey').value=saved;$('saveKey').checked=true;}}catch{}
+ function persistKey(){try{const key=$('apiKey').value.trim();if($('saveKey').checked&&key)localStorage.setItem(keyStore,key);else if(!$('saveKey').checked)localStorage.removeItem(keyStore);}catch{}}
+ $('saveKey').addEventListener('change',persistKey);$('apiKey').addEventListener('change',persistKey);
  const supported=new Set(['VOO','VTI','BND','QQQM']);
  let busy=false,timer=null,lastProfile={};
  const show=msg=>{$('marketStatus').textContent=msg;$('resultMarketStatus').textContent=msg};
