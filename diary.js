@@ -13,7 +13,9 @@
  const nameOf=sym=>preset(sym)?.label||sym;
  const qtyText=q=>(+q.toFixed(6)).toLocaleString('ko-KR',{maximumFractionDigits:6})+'주';
  const ccyText=(n,c)=>c==='USD'?usd(n):won(n);
- const signed=n=>(n>0?'+':n<0?'−':'')+won(Math.abs(n));
+ const fmt=n=>displayCcy==='USD'?usd(n):won(n);
+ const signed=n=>(n>0?'+':n<0?'−':'')+fmt(Math.abs(n));
+ const bigFmt=n=>displayCcy==='USD'?usdWhole(n):compact(n);
  const pctText=n=>Number.isFinite(n)?(n>0?'+':n<0?'−':'')+Math.abs(n).toFixed(2)+'%':'—';
  const tone=n=>n>0?'up':n<0?'down':'';
 
@@ -21,17 +23,20 @@
  function positions(trades=state.trades){
   const map={},issues=[];
   [...trades].sort((a,b)=>a.date<b.date?-1:a.date>b.date?1:0).forEach(t=>{
-   const p=map[t.symbol]||(map[t.symbol]={symbol:t.symbol,currency:t.currency,qty:0,cost:0,costCcy:0,realized:0,last:t.price});
+   const p=map[t.symbol]||(map[t.symbol]={symbol:t.symbol,currency:t.currency,qty:0,cost:0,costCcy:0,costUsd:0,realized:0,realizedUsd:0,last:t.price});
    const fx=t.currency==='USD'?t.fx:1;p.last=t.price;
-   if(t.side==='buy'){p.qty+=t.qty;p.cost+=t.qty*t.price*fx+(t.fee||0);p.costCcy+=t.qty*t.price;}
-   else{if(t.qty>p.qty+1e-9){issues.push(t);return;}const r=t.qty/p.qty,c=p.cost*r;p.realized+=t.qty*t.price*fx-(t.fee||0)-c;p.cost-=c;p.costCcy-=p.costCcy*r;p.qty-=t.qty;if(p.qty<1e-9){p.qty=0;p.cost=0;p.costCcy=0;}}
+   if(t.side==='buy'){p.qty+=t.qty;p.cost+=t.qty*t.price*fx+(t.fee||0);p.costCcy+=t.qty*t.price;if(t.currency==='USD')p.costUsd+=t.qty*t.price+(t.fee||0)/t.fx;}
+   else{if(t.qty>p.qty+1e-9){issues.push(t);return;}const r=t.qty/p.qty,c=p.cost*r,cu=p.costUsd*r;p.realized+=t.qty*t.price*fx-(t.fee||0)-c;if(t.currency==='USD')p.realizedUsd+=t.qty*t.price-(t.fee||0)/t.fx-cu;p.cost-=c;p.costCcy-=p.costCcy*r;p.costUsd-=cu;p.qty-=t.qty;if(p.qty<1e-9){p.qty=0;p.cost=0;p.costCcy=0;p.costUsd=0;}}
   });
-  const list=Object.values(map).map(p=>{const q=state.prices[p.symbol],price=q?.price??p.last,fx=p.currency==='USD'?state.fx:1,value=p.qty*price*fx,profit=value-p.cost;
-   return {...p,price,priceDate:q?.date,priced:!!q,avg:p.qty?p.costCcy/p.qty:0,value,profit,pct:p.cost?profit/p.cost*100:NaN};});
+  // In dollars, a US holding uses its real dollar cost and price, so its return leaves out the exchange-rate effect; a KRW holding converts at the current rate.
+  const dollars=displayCcy==='USD';
+  const list=Object.values(map).map(p=>{const q=state.prices[p.symbol],price=q?.price??p.last,us=p.currency==='USD',valueKrw=p.qty*price*(us?state.fx:1);
+   const cost=dollars?(us?p.costUsd:p.cost/state.fx):p.cost,value=dollars?(us?p.qty*price:valueKrw/state.fx):valueKrw,realized=dollars?(us?p.realizedUsd:p.realized/state.fx):p.realized,profit=value-cost;
+   return {...p,costKrw:p.cost,valueKrw,cost,value,realized,price,priceDate:q?.date,priced:!!q,avg:p.qty?p.costCcy/p.qty:0,profit,pct:cost?profit/cost*100:NaN};});
   return {list,issues};
  }
  function totals(list){const invested=list.reduce((a,p)=>a+p.cost,0),value=list.reduce((a,p)=>a+p.value,0),realized=list.reduce((a,p)=>a+p.realized,0);return {invested,value,profit:value-invested,pct:invested?(value-invested)/invested*100:NaN,realized};}
- window.diaryCosts=()=>Object.fromEntries(positions().list.filter(p=>p.qty>0).map(p=>[p.symbol,p.cost]));
+ window.diaryCosts=()=>Object.fromEntries(positions().list.filter(p=>p.qty>0).map(p=>[p.symbol,p.costKrw]));
 
  function status(msg,withUndo){$('dStatus').innerHTML=esc(msg)+(withUndo&&undo?' <button type="button" class="linkBtn" id="dUndoBtn">되돌리기</button>':'')+(storageOk?'':'<br><span class="error">이 브라우저에 저장하지 못했습니다. 백업 파일로 기록을 보관하세요.</span>');}
  function remember(label){undo={state:JSON.stringify(state),label};}
@@ -39,27 +44,28 @@
 
  function drawPositions(){
   const {list}=positions(),held=list.filter(p=>p.qty>0),t=totals(list);
-  $('dValue').textContent=compact(t.value);$('dInvested').textContent=compact(t.invested);
+  $('dValue').textContent=bigFmt(t.value);$('dInvested').textContent=bigFmt(t.invested);
   $('dProfit').textContent=signed(t.profit);$('dProfit').className='big '+tone(t.profit);$('dPct').textContent='투자금액 대비 '+pctText(t.pct);
-  $('dValueNote').textContent=held.length?`${held.length}개 종목 · 1달러 = ${won(state.fx)} 기준`:'매매 기록을 추가하면 계산됩니다';
+  $('dValueNote').textContent=held.length?`${held.length}개 종목 · 1달러 = ${won(state.fx)} 기준`+(displayCcy==='USD'?' · 달러 종목은 실제 달러 기준':''):'매매 기록을 추가하면 계산됩니다';
   $('dRealized').textContent=t.realized?`실현 손익 ${signed(t.realized)} (매도 완료분, 위 금액에 미포함)`:'';
-  $('dPositions').innerHTML=held.length?held.map(p=>`<tr><td><strong>${esc(nameOf(p.symbol))}</strong><small>${esc(p.symbol)} · ${p.currency==='USD'?'달러':'원화'}</small></td><td>${qtyText(p.qty)}</td><td>${ccyText(p.avg,p.currency)}</td><td>${won(p.cost)}</td><td><input type="number" class="priceInput" data-sym="${esc(p.symbol)}" value="${+p.price.toFixed(4)}" min="0" step="any" aria-label="${esc(nameOf(p.symbol))} 현재가"><small>${p.priced?esc(p.priceDate)+' 기준':'최근 매매가 · 현재가를 입력하세요'}</small></td><td>${won(p.value)}</td><td class="${tone(p.profit)}">${signed(p.profit)}</td><td class="${tone(p.profit)}">${pctText(p.pct)}</td></tr>`).join('')+`<tr class="total"><td>합계</td><td></td><td></td><td>${won(t.invested)}</td><td></td><td>${won(t.value)}</td><td class="${tone(t.profit)}">${signed(t.profit)}</td><td class="${tone(t.profit)}">${pctText(t.pct)}</td></tr>`
+  $('dPositions').innerHTML=held.length?held.map(p=>`<tr><td><strong>${esc(nameOf(p.symbol))}</strong><small>${esc(p.symbol)} · ${p.currency==='USD'?'달러':'원화'}</small></td><td>${qtyText(p.qty)}</td><td>${ccyText(p.avg,p.currency)}</td><td>${fmt(p.cost)}</td><td><input type="number" class="priceInput" data-sym="${esc(p.symbol)}" value="${+p.price.toFixed(4)}" min="0" step="any" aria-label="${esc(nameOf(p.symbol))} 현재가"><small>${p.priced?esc(p.priceDate)+' 기준':'최근 매매가 · 현재가를 입력하세요'}</small></td><td>${fmt(p.value)}</td><td class="${tone(p.profit)}">${signed(p.profit)}</td><td class="${tone(p.profit)}">${pctText(p.pct)}</td></tr>`).join('')+`<tr class="total"><td>합계</td><td></td><td></td><td>${fmt(t.invested)}</td><td></td><td>${fmt(t.value)}</td><td class="${tone(t.profit)}">${signed(t.profit)}</td><td class="${tone(t.profit)}">${pctText(t.pct)}</td></tr>`
    :'<tr><td colspan="8" class="empty">아직 보유 종목이 없습니다. 아래 "매매 기록 추가"에서 첫 매수를 기록하세요.</td></tr>';
  }
  function drawTrades(){
   const rows=[...state.trades].sort((a,b)=>a.date<b.date?1:a.date>b.date?-1:0);
-  $('tRows').innerHTML=rows.length?rows.map(t=>{const krw=t.qty*t.price*(t.currency==='USD'?t.fx:1);return `<tr><td>${esc(t.date)}</td><td class="${t.side==='buy'?'up':'down'}">${t.side==='buy'?'매수':'매도'}</td><td>${esc(nameOf(t.symbol))}</td><td>${qtyText(t.qty)}</td><td>${ccyText(t.price,t.currency)}</td><td>${t.currency==='USD'?won(t.fx):'—'}</td><td>${won(krw)}${t.fee?`<small>수수료 ${won(t.fee)}</small>`:''}</td><td class="memo">${esc(t.memo)}</td><td><button type="button" class="remove" data-trade="${t.id}" aria-label="${esc(t.date)} ${esc(nameOf(t.symbol))} 기록 삭제">✕</button></td></tr>`}).join('')
+  $('tRows').innerHTML=rows.length?rows.map(t=>{const krw=t.qty*t.price*(t.currency==='USD'?t.fx:1);return `<tr><td>${esc(t.date)}</td><td class="${t.side==='buy'?'up':'down'}">${t.side==='buy'?'매수':'매도'}</td><td>${esc(nameOf(t.symbol))}</td><td>${qtyText(t.qty)}</td><td>${ccyText(t.price,t.currency)}</td><td>${t.currency==='USD'?won(t.fx):'—'}</td><td>${displayCcy==='USD'?usd(t.currency==='USD'?t.qty*t.price:krw/state.fx):won(krw)}${t.fee?`<small>수수료 ${won(t.fee)}</small>`:''}</td><td class="memo">${esc(t.memo)}</td><td><button type="button" class="remove" data-trade="${t.id}" aria-label="${esc(t.date)} ${esc(nameOf(t.symbol))} 기록 삭제">✕</button></td></tr>`}).join('')
    :'<tr><td colspan="9" class="empty">매매 기록이 없습니다.</td></tr>';
  }
  function drawJournal(){
-  const es=[...state.entries].sort((a,b)=>a.date<b.date?-1:a.date>b.date?1:a.at-b.at);
+  // Entries saved before the currency toggle hold KRW only; convert those at the rate recorded with them.
+  const dollars=displayCcy==='USD',es=[...state.entries].sort((a,b)=>a.date<b.date?-1:a.date>b.date?1:a.at-b.at).map(e=>dollars?{...e,invested:e.investedUsd??e.invested/e.fx,value:e.valueUsd??e.value/e.fx,profit:e.profitUsd??e.profit/e.fx,pct:e.pctUsd??e.pct,holdings:(e.holdings||[]).map(h=>({...h,value:h.valueUsd??h.value/e.fx,pct:h.pctUsd??h.pct}))}:e);
   $('jList').innerHTML=es.length?[...es].reverse().map((e,i,arr)=>{const prev=arr[i+1],d=prev?e.value-prev.value:null;
-   return `<article class="entry"><header><strong>${esc(e.date)}</strong><button type="button" class="remove" data-entry="${e.id}" aria-label="${esc(e.date)} 일지 삭제">✕</button></header><div class="entryNums"><span>투자금액 <b>${won(e.invested)}</b></span><span>평가금액 <b>${won(e.value)}</b></span><span>수익 <b class="${tone(e.profit)}">${signed(e.profit)} · ${pctText(e.pct)}</b></span>${d===null?'':`<span>직전 기록 대비 <b class="${tone(d)}">${signed(d)}</b></span>`}</div>${e.holdings?.length?`<p class="hint">${e.holdings.map(h=>esc(nameOf(h.symbol))+' '+won(h.value)+' ('+pctText(h.pct)+')').join(' · ')}</p>`:''}${e.note?`<p class="note">${esc(e.note)}</p>`:''}</article>`}).join('')
+   return `<article class="entry"><header><strong>${esc(e.date)}</strong><button type="button" class="remove" data-entry="${e.id}" aria-label="${esc(e.date)} 일지 삭제">✕</button></header><div class="entryNums"><span>투자금액 <b>${fmt(e.invested)}</b></span><span>평가금액 <b>${fmt(e.value)}</b></span><span>수익 <b class="${tone(e.profit)}">${signed(e.profit)} · ${pctText(e.pct)}</b></span>${d===null?'':`<span>직전 기록 대비 <b class="${tone(d)}">${signed(d)}</b></span>`}</div>${e.holdings?.length?`<p class="hint">${e.holdings.map(h=>esc(nameOf(h.symbol))+' '+fmt(h.value)+' ('+pctText(h.pct)+')').join(' · ')}</p>`:''}${e.note?`<p class="note">${esc(e.note)}</p>`:''}</article>`}).join('')
    :'<p class="empty">아직 일지가 없습니다. 위에서 오늘 현황을 기록하면 여기에 날짜별로 쌓입니다.</p>';
   const svg=$('jChart');if(es.length<2){svg.classList.add('hidden');return;}svg.classList.remove('hidden');
   const W=1000,H=240,L=90,R=22,T=18,B=36,max=Math.max(...es.flatMap(e=>[e.value,e.invested]))*1.1||1;
   const x=i=>L+i/(es.length-1)*(W-L-R),y=v=>H-B-v/max*(H-T-B);let s='';
-  for(let i=0;i<=3;i++){const v=max*i/3;s+=`<line x1="${L}" x2="${W-R}" y1="${y(v)}" y2="${y(v)}" stroke="#e8ece5"/><text x="${L-12}" y="${y(v)+4}" text-anchor="end" font-size="11" fill="#718077">${compact(v)}</text>`;}
+  for(let i=0;i<=3;i++){const v=max*i/3;s+=`<line x1="${L}" x2="${W-R}" y1="${y(v)}" y2="${y(v)}" stroke="#e8ece5"/><text x="${L-12}" y="${y(v)+4}" text-anchor="end" font-size="11" fill="#718077">${bigFmt(v)}</text>`;}
   [0,es.length-1].forEach(i=>s+=`<text x="${x(i)}" y="${H-10}" text-anchor="${i?'end':'start'}" font-size="11" fill="#718077">${esc(es[i].date)}</text>`);
   [['invested','#c5ccc3'],['value','#2c6c50']].forEach(([k,c])=>{s+=`<polyline points="${es.map((e,i)=>x(i)+','+y(e[k])).join(' ')}" fill="none" stroke="${c}" stroke-width="3"/>`;const i=es.length-1;s+=`<circle cx="${x(i)}" cy="${y(es[i][k])}" r="5" fill="${c}"/>`;});
   svg.innerHTML=s;
@@ -97,7 +103,9 @@
  $('jSave').onclick=()=>{const {list}=positions(),held=list.filter(p=>p.qty>0);
   if(!held.length){status('기록할 보유 종목이 없습니다. 먼저 매매 기록을 추가하세요.');return;}
   const t=totals(list);remember('일지 기록');
-  state.entries.push({id:uid(),date:today(),at:Date.now(),invested:t.invested,value:t.value,profit:t.profit,pct:t.pct,realized:t.realized,fx:state.fx,note:$('jNote').value.trim(),holdings:held.map(p=>({symbol:p.symbol,qty:p.qty,price:p.price,value:p.value,pct:p.pct}))});
+  const other=(()=>{const keep=displayCcy;displayCcy=keep==='USD'?'KRW':'USD';const o=totals(positions().list);const oh=positions().list.filter(p=>p.qty>0);displayCcy=keep;return {t:o,h:oh};})();
+  const [k,u,kh,uh]=displayCcy==='USD'?[other.t,t,other.h,held]:[t,other.t,held,other.h];
+  state.entries.push({id:uid(),date:today(),at:Date.now(),invested:k.invested,value:k.value,profit:k.profit,pct:k.pct,realized:k.realized,investedUsd:u.invested,valueUsd:u.value,profitUsd:u.profit,pctUsd:u.pct,fx:state.fx,note:$('jNote').value.trim(),holdings:kh.map((p,i)=>({symbol:p.symbol,qty:p.qty,price:p.price,value:p.value,pct:p.pct,valueUsd:uh[i].value,pctUsd:uh[i].pct}))});
   save();$('jNote').value='';drawJournal();status(`${today()} 현황을 일지에 남겼습니다.`,true);};
  $('jList').addEventListener('click',e=>{const b=e.target.closest('[data-entry]');if(!b)return;remember('일지 삭제');state.entries=state.entries.filter(x=>x.id!==b.dataset.entry);save();drawJournal();status('일지를 삭제했습니다.',true);});
  $('dExport').onclick=()=>{const url=URL.createObjectURL(new Blob([JSON.stringify({app:'chagok-diary',version:1,exportedAt:new Date().toISOString(),...state},null,1)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download=`chagok-diary-${today()}.json`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);status('백업 파일을 내려받았습니다. 휴대폰·다른 PC에서는 "백업 불러오기"로 옮길 수 있습니다.');};
@@ -105,5 +113,6 @@
   try{const d=JSON.parse(await f.text());if(!Array.isArray(d.trades)||!Array.isArray(d.entries))throw 0;
    remember('백업 불러오기');state={trades:d.trades,prices:d.prices||{},fx:Number(d.fx)||state.fx,entries:d.entries};save();draw();status(`백업을 불러왔습니다. 매매 ${state.trades.length}건 · 일지 ${state.entries.length}건`,true);}
   catch{status('차곡 다이어리 백업 파일이 아닙니다. 내려받은 .json 파일을 선택하세요.');}});
+ window.diaryRedraw=draw;
  draw();if(!storageOk)status('');
 })();
