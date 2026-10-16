@@ -17,6 +17,18 @@ const effectiveRate=h=>((1+h.rate/100)*(1-h.expense/100)/(1-h.refExpense/100)-1)
 const weighted=(list,fn)=>list.reduce((a,h)=>a+fn(h)*h.weight/100,0);
 const keys=['monthly','years','broker','fx','fxChange','fxFee','divTaxUs','divTaxKr','allowance','taxRatio'];
 const holdingKeys=['weight','initial','rate','yield','expense','price'];
+const planFx=()=>Number($('fx').value)>0?Number($('fx').value):1400;
+const curSym=c=>c==='USD'?'$':'₩';
+// Amount fields entered in the display currency. The KRW value is the source of truth; dollars convert at the planner's base rate.
+const moneyFields=['monthly','allowance'];
+function moneyAttrs(el){if(!el.dataset.minKrw){el.dataset.minKrw=el.min;el.dataset.maxKrw=el.max;el.dataset.stepKrw=el.step;}const fx=planFx(),usd=displayCcy==='USD';
+ el.min=usd?Math.floor(el.dataset.minKrw/fx*100)/100:el.dataset.minKrw;el.max=usd?Math.ceil(el.dataset.maxKrw/fx*100)/100:el.dataset.maxKrw;el.step=usd?'any':el.dataset.stepKrw;}
+function showMoney(id){const el=$(id),krw=Number(el.dataset.krw);moneyAttrs(el);el.value=displayCcy==='USD'?+(krw/planFx()).toFixed(2):Math.round(krw);}
+const fieldKrw=id=>Number($(id).dataset.krw);
+const inputToKrw=v=>displayCcy==='USD'?v*planFx():v;
+const krwToInput=v=>displayCcy==='USD'?+(v/planFx()).toFixed(2):Math.round(v);
+function setMoney(id,krw){$(id).dataset.krw=krw;showMoney(id);}
+function currencyLabels(){document.querySelectorAll('.cur.follow').forEach(e=>e.textContent=curSym(displayCcy));document.querySelectorAll('.ccyName').forEach(e=>e.textContent=displayCcy==='USD'?'달러':'원');}
 const won=n=>Math.round(n).toLocaleString('ko-KR')+'원';
 const compact=n=>Math.abs(n)>=1e8?(n/1e8).toFixed(2)+'억원':Math.abs(n)>=1e4?(n/1e4).toLocaleString('ko-KR',{maximumFractionDigits:0})+'만원':won(n);
 const fund=id=>funds.find(f=>f.id===id);
@@ -25,17 +37,16 @@ const weightSum=()=>holdings.reduce((a,h)=>a+h.weight,0);
 function newHolding(f,weight){return {id:f.id,route:f.route,weight,initial:0,rate:f.rate,yield:f.yield,price:f.price,refExpense:f.fee,expense:f.fee}}
 function drawFunds(){$('etfs').innerHTML=funds.map(f=>{const on=holdings.some(h=>h.id===f.id);return `<button type="button" class="etf" data-id="${f.id}" aria-pressed="${on}"><span class="pill">${f.type}</span>${on?'<span class="selectedMark">✓</span>':''}<strong>${f.label}</strong><small>${f.name}</small><small style="margin-top:10px">${f.hist===null?(f.id==='CUSTOM'?'상장 시장·과세 유형 선택 가능':'과거 실적 미연결 · 보수 '+f.fee+'%'):'과거 '+(f.period||10)+'년 연평균 '+f.hist.toFixed(2)+'%'}</small></button>`}).join('');
  $('fundInfo').textContent=holdings.length?holdings.map(h=>{const f=fund(h.id);return f.id==='CUSTOM'?'직접 설정 · 보유하거나 검토 중인 상품의 자료를 확인해 가정을 입력하세요.':f.hist===null?`${f.label} · ${routeNames[f.route]} · 총보수 ${f.fee}% · ${f.note}. 과거 실적·실시간 시세는 연결되지 않았습니다. 보수와 가격은 운용사 자료로 확인하세요.`:`${f.id} · 과거 ${f.period||10}년 연평균 ${f.hist}% (2026.06.30 기준, USD 총수익률) · 운용보수 ${f.fee}% · 미래 기본 가정 ${f.rate}%와는 다른 값입니다.`}).join('\n'):'투자할 ETF를 하나 이상 선택하세요. 여러 개를 고르면 매달 투자 금액을 비중대로 나눠 적립합니다.';}
-function priceUnit(h){return h.route==='us'?'달러':'원'}
 function drawHoldings(){
- $('holdingRows').innerHTML=holdings.map((h,i)=>{const f=fund(h.id),cell=(k,attrs)=>`<td><input type="number" data-i="${i}" data-k="${k}" value="${h[k]}" ${attrs} required aria-label="${f.label} ${k}"></td>`;
-  return `<tr><td><strong>${f.label}</strong><small>${f.id==='CUSTOM'?`<select data-i="${i}" data-k="route" aria-label="직접 설정 상장 시장 / 과세 유형">${Object.entries(routeNames).map(([v,n])=>`<option value="${v}"${h.route===v?' selected':''}>${n}</option>`).join('')}</select>`:routeNames[h.route]}</small></td>${cell('weight','min="0" max="100" step="any"')}${cell('initial','min="0" max="100000000000" step="any"')}${cell('rate','min="-50" max="40" step=".01"')}${cell('yield','min="0" max="20" step=".0001"')}${cell('expense','min="0" max="5" step=".0001"')}${cell('price','min=".01" max="10000000" step="any"')}<td style="white-space:nowrap">${priceUnit(h)}/주</td><td><button type="button" class="remove" data-remove="${i}" aria-label="${f.label} 빼기">✕</button></td></tr>`}).join('');
+ $('holdingRows').innerHTML=holdings.map((h,i)=>{const f=fund(h.id),cell=(k,attrs,sym)=>`<td>${sym?`<div class="money sm"><span class="cur" aria-hidden="true">${sym}</span>`:''}<input type="number" data-i="${i}" data-k="${k}" value="${k==='initial'?krwToInput(h.initial):h[k]}" ${attrs} required aria-label="${f.label} ${k}">${sym?'</div>':''}</td>`;
+  return `<tr><td><strong>${f.label}</strong><small>${f.id==='CUSTOM'?`<select data-i="${i}" data-k="route" aria-label="직접 설정 상장 시장 / 과세 유형">${Object.entries(routeNames).map(([v,n])=>`<option value="${v}"${h.route===v?' selected':''}>${n}</option>`).join('')}</select>`:routeNames[h.route]}</small></td>${cell('weight','min="0" max="100" step="any"')}${cell('initial','min="0" max="100000000000" step="any"',curSym(displayCcy))}${cell('rate','min="-50" max="40" step=".01"')}${cell('yield','min="0" max="20" step=".0001"')}${cell('expense','min="0" max="5" step=".0001"')}${cell('price','min=".01" max="10000000" step="any"',h.route==='us'?'$':'₩')}<td style="white-space:nowrap">/주</td><td><button type="button" class="remove" data-remove="${i}" aria-label="${f.label} 빼기">✕</button></td></tr>`}).join('');
  $('holdingTable').classList.toggle('hidden',!holdings.length);weightStatus();routeUI();
 }
-function weightStatus(){const s=weightSum(),ok=Math.abs(s-100)<.01;$('weightSum').textContent=`비중 합계 ${+s.toFixed(2)}%`+(ok?' ✓':' · 100%가 되도록 조정하세요')+(initialSum()?` · 이미 투자한 원금 ${won(initialSum())}`:'');$('weightSum').className=ok?'hint':'error';}
+function weightStatus(){const s=weightSum(),ok=Math.abs(s-100)<.01;$('weightSum').textContent=`비중 합계 ${+s.toFixed(2)}%`+(ok?' ✓':' · 100%가 되도록 조정하세요')+(initialSum()?` · 이미 투자한 원금 ${displayCcy==='USD'?usd(initialSum()/planFx()):won(initialSum())}`:'');$('weightSum').className=ok?'hint':'error';}
 function routeUI(){const us=holdings.some(h=>h.route==='us');['fxFee','allowance','divTaxUs'].forEach(k=>$(k).disabled=!us);$('divTaxKr').disabled=!holdings.some(h=>h.route!=='us');$('taxRatio').disabled=!holdings.some(h=>h.route==='krOther');}
 function toggleFund(id){const i=holdings.findIndex(h=>h.id===id);if(i>=0)holdings.splice(i,1);else holdings.push(newHolding(fund(id),Math.max(0,+(100-weightSum()).toFixed(2))));drawFunds();drawHoldings();window.dispatchEvent(new Event('fundchange'));}
 $('etfs').addEventListener('click',e=>{const button=e.target.closest('button');if(button)toggleFund(button.dataset.id);});
-$('holdingRows').addEventListener('input',e=>{const {i,k}=e.target.dataset;if(k&&k!=='route'){holdings[i][k]=Number(e.target.value);if(k==='weight'||k==='initial')weightStatus();}});
+$('holdingRows').addEventListener('input',e=>{const {i,k}=e.target.dataset;if(k&&k!=='route'){holdings[i][k]=k==='initial'?inputToKrw(Number(e.target.value)):Number(e.target.value);if(k==='weight'||k==='initial')weightStatus();}});
 $('holdingRows').addEventListener('change',e=>{const {i,k}=e.target.dataset;if(k!=='route')return;const h=holdings[i],from=h.route,to=e.target.value,fx=Number($('fx').value)||1400;
  // Only the quote currency changes between US and domestic listings; convert the entered price instead of resetting it.
  if(from==='us'&&to!=='us')h.price=Math.round(h.price*fx);else if(from!=='us'&&to==='us')h.price=+(h.price/fx).toFixed(4);
@@ -45,10 +56,10 @@ $('fromDiary').onclick=()=>{const costs=window.diaryCosts?.()||{};const ids=Obje
  if(!ids.length){$('diaryImportNote').textContent='다이어리에 계획 목록과 같은 종목(VOO·VTI·BND·QQQM·360750·069500)의 매수 기록이 없습니다.';return;}
  ids.forEach(id=>{let h=holdings.find(x=>x.id===id);if(!h){h=newHolding(fund(id),0);holdings.push(h);}h.initial=Math.round(costs[id]);});
  holdings.filter(h=>!ids.includes(h.id)).forEach(h=>h.initial=0);
- $('diaryImportNote').textContent=`다이어리의 현재 보유 투자금액을 불러왔습니다: ${ids.map(id=>fund(id).label+' '+won(costs[id])).join(' · ')}`;drawFunds();drawHoldings();};
+ $('diaryImportNote').textContent=`다이어리의 현재 보유 투자금액을 불러왔습니다: ${ids.map(id=>fund(id).label+' '+(displayCcy==='USD'?usd(costs[id]/planFx()):won(costs[id]))).join(' · ')}`;drawFunds();drawHoldings();};
 $('equalWeights').onclick=()=>{if(!holdings.length)return;const w=Math.floor(10000/holdings.length)/100;holdings.forEach((h,i)=>h.weight=i===0?+(100-w*(holdings.length-1)).toFixed(2):w);drawHoldings();};
 $('yearsRange').oninput=()=>{$('years').value=$('yearsRange').value};$('years').oninput=()=>{$('yearsRange').value=$('years').value};
-function read(){return Object.fromEntries(keys.map(k=>[k,Number($(k).value)]));}
+function read(){return Object.fromEntries(keys.map(k=>[k,moneyFields.includes(k)?fieldKrw(k):Number($(k).value)]));}
 function line(label,value){return `<div class="costline"><span>${label}</span><strong>${value}</strong></div>`}
 function chart(rows){const dollars=displayCcy==='USD';const value=(r,k)=>dollars?r[k]/rowFx(r):r[k];const W=1000,H=300,L=90,R=22,T=22,B=42,max=Math.max(...rows.map(r=>Math.max(value(r,'value'),value(r,'principal'),value(r,'net'))))*1.1;const x=m=>L+m/rows.length*(W-L-R),y=v=>H-B-v/max*(H-T-B);let s='';for(let i=0;i<=4;i++){let v=max*i/4;s+=`<line x1="${L}" x2="${W-R}" y1="${y(v)}" y2="${y(v)}" stroke="#e8ece5"/><text x="${L-12}" y="${y(v)+4}" text-anchor="end" font-size="11" fill="#718077">${dollars?'$'+Math.round(v).toLocaleString('en-US'):compact(v)}</text>`}for(let i=0;i<=4;i++){let m=Math.round(rows.length*i/4);s+=`<text x="${x(m)}" y="${H-12}" text-anchor="middle" font-size="11" fill="#718077">${+(m/12).toFixed(1)}년</text>`}const points=k=>`${x(0)},${y(0)} `+rows.map(r=>`${x(r.m)},${y(value(r,k))}`).join(' ');s+=`<polygon points="${points('value')} ${x(rows.length)},${y(0)}" fill="#edf3e4"/>`;[['principal','#c5ccc3'],['net','#a5b98a'],['value','#2c6c50']].forEach(([k,c])=>s+=`<polyline points="${points(k)}" fill="none" stroke="${c}" stroke-width="3"/>`);$('chart').innerHTML=s;}
 function inspect(){const r=current[Number($('inspect').value)-1];$('chartReadout').textContent=`${r.m}개월 · 원금 ${dualText(r.principal,rowFx(r))} · 평가금액 ${dualText(r.value,rowFx(r))} · 세후 수령액 ${dualText(r.net,rowFx(r))}`;}
@@ -65,6 +76,7 @@ function render(scroll=true){const r=current.at(-1),list=active();renderFx=rowFx
  if(scroll)showPage('results');
 }
 function setCurrency(c){displayCcy=c;try{localStorage.setItem('chagok-ccy',c);}catch{}
+ currencyLabels();moneyFields.forEach(showMoney);drawHoldings();
  document.querySelectorAll('[data-ccy]').forEach(b=>b.setAttribute('aria-pressed',b.dataset.ccy===c));
  if(current.length)render(false);window.diaryRedraw?.();budgetConversion();}
 $('ccyToggle').addEventListener('click',e=>{const b=e.target.closest('[data-ccy]');if(b&&b.dataset.ccy!==displayCcy)setCurrency(b.dataset.ccy);});
@@ -79,10 +91,13 @@ function restore(){
  try{const old=JSON.parse(localStorage.getItem('chagok-plan-v1'));if(old&&fund(old.selected)&&old.params){const p=old.params,f=fund(old.selected);holdings=[{...newHolding(f,100),route:f.id==='CUSTOM'&&routeNames[p.route]?p.route:f.route,...Object.fromEntries(['rate','yield','price','refExpense','expense'].filter(k=>Number.isFinite(p[k])).map(k=>[k,p[k]]))}];keys.forEach(k=>{if(p[k]!==undefined)$(k).value=p[k]});if(Number.isFinite(p.divTax))$(p.route==='us'?'divTaxUs':'divTaxKr').value=p.divTax;return;}}catch{}
  holdings=[newHolding(fund('VOO'),100)];
 }
-restore();$('yearsRange').value=$('years').value;drawFunds();drawHoldings();
+restore();$('yearsRange').value=$('years').value;
+moneyFields.forEach(id=>{setMoney(id,Number($(id).value));$(id).addEventListener('input',()=>{$(id).dataset.krw=inputToKrw(Number($(id).value));});});
+$('fx').addEventListener('change',()=>{if(displayCcy==='USD'){moneyFields.forEach(showMoney);drawHoldings();}});
+currencyLabels();drawFunds();drawHoldings();
 
 window.recalculateMarket=()=>{drawHoldings();if(!$('results').classList.contains('hidden')&&active().length&&Math.abs(weightSum()-100)<.01){params=read();current=simulatePortfolio(params,active());render(false);}};
 
-function budgetConversion(){$('budgetUsd').textContent=Number($('fx').value)>0?'입력 환율 기준 '+usd(Number($('monthly').value)/Number($('fx').value))+' / 월'+(displayCcy==='USD'?' · 입력은 원화, 결과는 달러로 표시':''):'';}
+function budgetConversion(){const krw=fieldKrw('monthly');$('budgetUsd').textContent=Number($('fx').value)>0&&Number.isFinite(krw)?'기준 환율로 '+(displayCcy==='USD'?won(krw):usd(krw/planFx()))+' / 월':'';}
 ['monthly','fx'].forEach(k=>$(k).addEventListener('input',budgetConversion));budgetConversion();
 document.querySelectorAll('[data-ccy]').forEach(b=>b.setAttribute('aria-pressed',b.dataset.ccy===displayCcy));
